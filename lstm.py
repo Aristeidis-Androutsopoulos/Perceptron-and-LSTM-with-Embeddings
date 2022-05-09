@@ -30,13 +30,14 @@ class Model_Config:
     # SECTION: A.2
     # Model configuration
     # NOTE: variables for plot control and naming
-    # TODO: Change values accordingly
+    # TODO: Change values accordingly in each run
 
     section: str = 'A5.3'
     distinction: str = 'embeddings 3 LSTM'
 
     folder: str = 'plots\\'
 
+    # Variable for Hyperparameter Autotune
     tuning: bool = False
     # TODO: Change batch size to 128 for the 20 model
 
@@ -47,6 +48,7 @@ class Model_Config:
     num_folds: int = 5
 
     # SECTION: A.2.1 - Loss Function and Metrics
+    # Binary cross entropy is better suited for multilabel classification
     loss_function: str = 'binary_crossentropy'
     # loss_function: str = 'mean_squared_error'
     metrics: list = field(default_factory=lambda: ['accuracy', 'mean_squared_error'])
@@ -55,24 +57,28 @@ class Model_Config:
     # SECTION: A.2.2 - Number of output neurons
     no_classes: int = 20
 
-    # SECTION: A.2.3 - Activation Function of Inner Layers - Not in Use
+    # SECTION: A.2.3 - Activation Function of Inner Layers - not in use
+    # Default Choice, Seek report for more
     activation_function_inner: str = 'relu'
 
-    # SECTION: A.2.4 - Activation Function of Output Layer
+    # SECTION: A.2.4 - Activation Function of Output Layer - not in use
+    # Sigmoid allows multilabel classification
     activation_function_output: str = 'sigmoid'
 
     # SECTION: A.2.5 - # of Neurons in 1st Hidden Layer
-    # TODO - 20, 4270, 8540
+    # TODO - 20, 4270, 8540, change in each run
     hidden1_num_of_neurons: int = 400
 
     # SECTION: A.2.6 - # of Neurons in 2nd Hidden Layer
-    # TODO - 2135, 4270, 8540
+    # TODO - 2135, 4270, 8540, change in each run
     hidden2_num_of_neurons: int = 300
 
+    # SECTION: # of Neurons in 3nd Hidden Layer
     hidden3_num_of_neurons: int = 32
 
     # SECTION: A.2.7 - Early Stopping
-    # TODO - Find good min_delta and good patience
+    # TODO - Find good min_delta and good patience for this specific task
+    #   problem with hours of run. Use larger min delta
     early_stopping = tf.keras.callbacks.EarlyStopping(monitor='loss', min_delta=0.01, patience=15,
                                                       restore_best_weights=True)
 
@@ -84,7 +90,9 @@ class Model_Config:
     momentum: float = 0
 
     # optimizer = tf.keras.optimizers.SGD(learning_rate=learning_rate, momentum=momentum, nesterov=False)
-    optimizer = tf.keras.optimizers.Adam(learning_rate = learning_rate)
+    # Adam showed far better results than SGD for the specific task.
+    # TODO: Check Adam with different Learning Rates
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
     # SECTION: A.4 - Regularisation with L2
     # TODO: Weight Decay - 0.1, 0.5, 0.9
@@ -93,6 +101,7 @@ class Model_Config:
     # NOTE: EXTRA - Kernel and Bias Initializer
     # TODO: Initialize to smart distributions
     # NOTE: He Normalization is a great choice for RELU activation function
+    # Carefully to use He Uniform and not He Normal. He uniform gives all the kernel weights the same value initially
     kernel_initializer = tf.keras.initializers.HeUniform()
     bias_initializer = tf.keras.initializers.Zeros()
 
@@ -101,6 +110,7 @@ class Model_Config:
 
 def preprocess(config):
     # SECTION: Preprocess of data
+    # open files and save data into lists
     open_file = open("test-data.dat", "r")
     test_data = open_file.read()
     test_data_into_list = test_data.split("\n")
@@ -111,47 +121,62 @@ def preprocess(config):
     train_data_into_list = train_data.split("\n")
     open_file.close()
 
+    # Throw last value because its empty
     train_data_into_list.pop()
     test_data_into_list.pop()
 
+    # Combine all data into one set for the 5 fold validation
     data_into_list = train_data_into_list + test_data_into_list
 
-    lst = [re.sub('<[^>]+>', '', x) for x in data_into_list]
+    # Remove all values of type <int>
+    lst_of_data = [re.sub('<[^>]+>', '', x) for x in data_into_list]
 
     vocab_range = np.arange(0, 8520, 1)
     vocab_range = vocab_range.tolist()
-    output = [str(x) for x in vocab_range]
+    vocab_output = [str(x) for x in vocab_range]
 
+    # Vectorize data using Scikit Learn for each number in our vocabulary
     # vectorizer = CountVectorizer(tokenizer=lambda txt: txt.split())
-    # vectorizer.fit_transform(output)
-    # k_hot_end = vectorizer.transform(lst)
+    # vectorizer.fit_transform(vocab_output)
+    # k_hot_end = vectorizer.transform(lst_of_data)
     # df_bow_sklearn = pd.DataFrame(k_hot_end.toarray(), columns=vectorizer.get_feature_names_out())
-    # my_new = df_bow_sklearn.to_numpy()
+    # end_form = df_bow_sklearn.to_numpy()
 
+    # Load all labels and carefully combine them into one in the order of the data combination above
     test_labels = np.loadtxt("test-label.dat", dtype=int)
     train_labels = np.loadtxt("train-label.dat", dtype=int)
 
-    con = np.vstack((train_labels, test_labels))
+    labels = np.vstack((train_labels, test_labels))
 
+    # Initialize a list
     last_list = list()
 
-    for i in lst:
+    # Iterate list and create the list of all integers in vocabulary
+    for i in lst_of_data:
         a_list = i.split()
+        # Convert to Integers with map function
         map_object = map(int, a_list)
         list_of_integers = list(map_object)
+        # Add 1 to each integer so that you can pad with zeros
         love = map(lambda x: x + 1, list_of_integers)
         last_list.append(list(love))
 
+    # Add padding to make all vectors the same length. Add the padding in the end of each vector
     padded_docs = pad_sequences(last_list, maxlen=config.max_length, padding='post')
     print(padded_docs)
 
     # NOTE: No Standardization or Normalization before the embedding layer
 
-    return padded_docs, con
+    return padded_docs, labels
     # return stand_data, stand_label
 
 
 def model_builder(hp):
+    # SECTION: Tuning model build
+    # NOTE: Special config for this model builder, because of keras initialized function.
+    # TODO: Change Model to Embedding Multilayer Perceptron
+    # TODO: Set the same model through advanced usage of model_builder extention with keras
+    # Make the model the same for the tuning purposes. Further Explanation in actual model bellow
     config = Model_Config()
 
     model = tf.keras.models.Sequential([
@@ -180,24 +205,34 @@ def model_builder(hp):
 
 # TODO: Set the function with no repeatable code. See example in https://keras.io/guides/keras_tuner/getting_started/
 def Tune_Model(data, labels):
+    # SECTION: Tune Model
+    # TODO: Change the model at model_builder for proper tuning
+
+    # Tune model with exhaustive random search to check all possible combinations of both learning rate and momentum
     tuner = kt.RandomSearch(model_builder,
                             objective='loss',
                             directory='pythonProject3',
                             project_name='Tuning')
 
+    # Early stopping with relatively small patience but 0 value difference
     stop_early = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5)
 
+    # Set tuner to see all search space
     tuner.search_space_summary()
 
+    # Initiate the Search
     tuner.search(data, labels, epochs=10, validation_split=0.2, callbacks=[stop_early], verbose=2)
 
     # Get the optimal hyperparameters
     best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
 
+    # Print them in orderly fashion
+
     print(f"""
     The hyperparameter search is complete. The optimal momentum for the optimizer is {best_hps.get('momentum')} and 
     the optimal learning rate for the optimizer is {best_hps.get('learning_rate')}. 
     """)
+
     return best_hps.get('learning_rate'), best_hps.get('momentum')
 
 
@@ -212,86 +247,100 @@ def neural_model(config, data, labels):
     all_fold_acc = list()
 
     # For loop for Cross Validation
-    # TODO: !!!!! !!!!! !!!!! Change it
-    # for train, test in kfold.split(data, labels):
-    # NOTE: MODEL
-    model = tf.keras.models.Sequential([
+    # NOTE: Checking the fold for better results
+    for train, test in kfold.split(data, labels):
+        # NOTE: MODEL  with type sequential using the sequential function initializer
 
-        # NOTE: Embedding Layer
+        model = tf.keras.models.Sequential([
 
-        tf.keras.layers.Embedding(8521, 64, input_length=config.max_length),
+            # NOTE: Embedding Layer
+            # Embedding Layer with ability to train while running epochs, mask zero to true to ignore all zero values
+            # from the processes. Because of the zero masking, vocabulary becomes +1.
 
-        # tf.keras.layers.Flatten(),
+            tf.keras.layers.Embedding(8521, 64, input_length=config.max_length, trainable=True, mask_zero=True),
 
-        # tf.keras.layers.Dropout(0.1),
+            # Needs to flatten to put the output of the embedding layer to the Perceptron Model
+            # tf.keras.layers.Flatten(),
 
-        # NOTE: First Hidden Layer
-        # tf.keras.layers.LSTM(config.hidden1_num_of_neurons,dropout=0.4),
-        tf.keras.layers.LSTM(config.hidden1_num_of_neurons, dropout=0.4, return_sequences=True),
+            # Drop out Layer as an overfitting solution
+            # tf.keras.layers.Dropout(0.1),
 
-        # NOTE: Second Hidden Layer
-        # tf.keras.layers.LSTM(config.hidden2_num_of_neurons, return_sequences = True, dropout=0.3),
-        tf.keras.layers.LSTM(config.hidden2_num_of_neurons, dropout=0.4),
+            # NOTE: First Hidden Layer without bias and kernel initializers
+            # tf.keras.layers.LSTM(config.hidden1_num_of_neurons,dropout=0.4),
+            # Set layer with big inner dropout and return sequences as output so that you can use second LSTM layer
+            tf.keras.layers.LSTM(config.hidden1_num_of_neurons, dropout=0.4, return_sequences=True),
 
-        # NOTE: Third Hidden Layer
-        # tf.keras.layers.LSTM(config.hidden2_num_of_neurons),
-        # tf.keras.layers.LSTM(config.hidden3_num_of_neurons, return_sequences = True),
+            # NOTE: Second Hidden Layer without bias and kernel initializers
+            # NOTE: If return sequences is true then both the hidden state and the shell state and thus return output is a 3d Tensor
+            #   if false then it returns only the last output sequence and thus output is a 1d Tensor
 
+            # tf.keras.layers.LSTM(config.hidden2_num_of_neurons, return_sequences = True, dropout=0.3),
+            tf.keras.layers.LSTM(config.hidden2_num_of_neurons, dropout=0.4),
 
-        # TODO: Set Dropout layers if model converges
-        #  Only if Over-fitting happens
-        tf.keras.layers.Dropout(0.1),
+            # NOTE: Third Hidden Layer without bias and kernel initializers
+            # Problem might be solvable if more complexity is added
+            # tf.keras.layers.LSTM(config.hidden2_num_of_neurons),
+            # tf.keras.layers.LSTM(config.hidden3_num_of_neurons, return_sequences = True),
 
-        # tf.keras.layers.Flatten(),
+            # TODO: Set Dropout layers if model converges - DONE
+            #  Only if Over-fitting happens
+            tf.keras.layers.Dropout(0.2),
 
-        # NOTE: Output Layer
+            # NOTE: IF return sequences is true flatten is nececcery
+            # tf.keras.layers.Flatten(),
 
-        # tf.keras.layers.Dense(32, activation=config.activation_function_output,
-        #                       kernel_initializer=config.kernel_initializer,
-        #                       bias_initializer=config.bias_initializer),
+            # NOTE: Output Layer  with bias and kernel initializers
+            # Outup layers need to be a perceptron with 20 output dimension.
+            # Extra layer added in testing for complexity, worst results overall
 
+            # tf.keras.layers.Dense(32, activation=config.activation_function_output,
+            #                       kernel_initializer=config.kernel_initializer,
+            #                       bias_initializer=config.bias_initializer),
 
-        tf.keras.layers.Dense(config.no_classes, activation=config.activation_function_output,
-                              kernel_initializer=config.kernel_initializer,
-                              bias_initializer=config.bias_initializer)
+            tf.keras.layers.Dense(config.no_classes, activation=config.activation_function_output,
+                                  kernel_initializer=config.kernel_initializer,
+                                  bias_initializer=config.bias_initializer)
 
-    ])
+        ])
 
-    model.summary()
+        model.summary()
 
-    # NOTE: Model Compile
-    model.compile(optimizer=config.optimizer,
-                  loss=config.loss_function,
-                  metrics=config.metrics)
+        # NOTE: Model Compile
+        model.compile(optimizer=config.optimizer,
+                      loss=config.loss_function,
+                      metrics=config.metrics)
 
-    # NOTE: Model Fit
-    # TODO: !!!!! !!!!! !!!!! Change it
-    history = model.fit(data, labels, epochs=config.no_epochs, batch_size=config.batch_size,
-                        callbacks=[config.early_stopping], validation_split=0.3, verbose=config.verbose)
-    # history = model.fit(data[train], labels[train], epochs=config.no_epochs, batch_size=config.batch_size,
-    #                     callbacks=[config.early_stopping], validation_split=0.2, verbose=config.verbose)
-    print(model.metrics_names)
+        # NOTE: Model Fit
+        # TODO: Find possible alterations with better results for the occurring over-fit problem even for
+        #  embedding layer
 
-    # NOTE: Model Evaluate
-    ce_loss, accuracy, mse = model.evaluate(data, labels)
-    # ce_loss, accuracy, mse = model.evaluate(data[test], labels[test])
+        history = model.fit(data[train], labels[train], epochs=config.no_epochs, batch_size=config.batch_size,
+                            callbacks=[config.early_stopping], validation_split=0.3, verbose=config.verbose)
 
-    # Keep the greatest model's history
-    if len(all_fold_ce) == 0:
-        best_fold_history = history
-    elif ce_loss < all_fold_ce[-1]:
-        best_fold_history = history
+        # print(model.metrics_names)
 
-    # Save each fold's loss and metrics
-    all_fold_ce.append(ce_loss)
-    all_fold_mse.append(mse)
-    all_fold_acc.append(accuracy)
+        # NOTE: Model Evaluate
+        ce_loss, accuracy, mse = model.evaluate(data[test], labels[test])
 
-    print("Mean of Cross-Entropy loss is: ", np.mean(all_fold_ce))
-    print("Mean of Mean Squared Error is: ", np.mean(all_fold_mse))
-    print("Mean of Accuracy is: ", np.mean(all_fold_acc))
+        # Keep the greatest model's history
+        if len(all_fold_ce) == 0:
+            best_fold_history = history
+        elif ce_loss < all_fold_ce[-1]:
+            best_fold_history = history
+
+        # Save each fold's loss and metrics
+        all_fold_ce.append(ce_loss)
+        all_fold_mse.append(mse)
+        all_fold_acc.append(accuracy)
+
+        # Print message in each fold with mean values
+        print("Mean of Cross-Entropy loss is: ", np.mean(all_fold_ce))
+        print("Mean of Mean Squared Error is: ", np.mean(all_fold_mse))
+        print("Mean of Accuracy is: ", np.mean(all_fold_acc))
 
     # NOTE: Used to save mean of all folds for report
+    #   empty when uploaded for potential run by other person
+    #   merge with other files
     f = open("numbers.txt", "a")
     f.write("Start \n")
     f.write("Run " + config.section + ', ' + config.distinction + '\n')
@@ -300,12 +349,15 @@ def neural_model(config, data, labels):
     f.write(str(np.mean(all_fold_acc)) + "\n")
     f.close()
 
+    # return the best history
+    # NOTE: Ignore warning, made sure it always has a history to return
     return best_fold_history
 
 
 def plots_run_time(history, config):
     # SECTION: Plotting
 
+    # Plot Cross Entropy by itself
     # plt.style.use('_mpl-gallery')
     sns.set()
     sns.set_theme()
@@ -323,11 +375,14 @@ def plots_run_time(history, config):
 
     # NOTE: for small # epochs uncomment bellow
     # ax0.xaxis.set_major_locator(mticker.MultipleLocator(1))
+
+    # save the figure to file
     plt.savefig(config.folder + config.section + '_ce_' + config.distinction + '.png', format='png', pad_inches=0.2,
                 bbox_inches="tight")
 
     plt.show()
 
+    # Plot Accuracy and MSE together
     fig2, [ax1, ax2] = plt.subplots(1, 2, constrained_layout=True, figsize=(10, 5))
 
     # ax1.set_facecolor('0.8')
@@ -337,6 +392,7 @@ def plots_run_time(history, config):
     ax1.set_ylabel('Error')
     ax1.set_title('Categorical Accuracy Metric, ' + config.section + ', ' + config.distinction, loc='center')
     ax1.legend()
+
     # NOTE: for small # epochs uncomment bellow
     # ax1.xaxis.set_major_locator(mticker.MultipleLocator(1))
 
@@ -346,8 +402,11 @@ def plots_run_time(history, config):
     ax2.set_xlabel('Epochs')
     ax2.set_title('MSE Metric, ' + config.section + ', ' + config.distinction, loc='center')
     ax2.legend()
+
     # NOTE: for small # epochs uncomment bellow
     # ax2.xaxis.set_major_locator(mticker.MultipleLocator(1))
+
+    # save the figure to file
     plt.savefig(config.folder + config.section + '_metrics_' + config.distinction + '.png', format='png',
                 pad_inches=0.2,
                 bbox_inches="tight")
@@ -358,17 +417,22 @@ def plots_run_time(history, config):
 
 
 if __name__ == '__main__':
+    # Initialise configuration of the model with last changes
     model_config = Model_Config()
 
+    # Preprocess data by calling Preprocess(model_config) for padding preprocessing
     my_data, my_labels = preprocess(model_config)
-    # NOTE: If tuning is needed uncomment next line (should also comment previous line)
+    # NOTE: If tuning automatically is needed uncomment next line (should also comment previous line)
     # model_config = Model_Config(tuning=True)
 
-    if model_config.tuning == True:
+    if model_config.tuning:
         my_model = Tune_Model(my_data, my_labels)
 
+    # Run the Model and return the best history out of all folds
     best_fold_history = neural_model(model_config, my_data, my_labels)
 
+    # Plot everything neede according to history returned
     plots_run_time(best_fold_history, model_config)
 
+    # Print DONE for ending
     print("done")
